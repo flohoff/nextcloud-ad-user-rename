@@ -1,0 +1,82 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use feature 'signatures';
+use experimental 'switch';
+use open IO => ":encoding(utf-8)";
+use open ':std';
+use POSIX;
+use File::Slurp;
+use Data::Dumper;
+use Getopt::Long::Descriptive;
+use List::MoreUtils qw/pairwise/;
+use JSON;
+
+sub csv_line_split($line) {
+	my @elem;
+	while(length($line)) {
+		if ($line =~ s/^"([^"]*)"(;|$)//) {
+			push @elem, $1
+		} elsif ($line =~ s/^([^;]*)(;|$)//) {
+			push @elem, $1;
+		} else {
+			last;
+		}
+	}
+	return \@elem;
+}
+
+sub csv_line_split_keys($line, $keyarray) {
+	my $lineelements=csv_line_split($line);
+	my %a=pairwise { ( $a, $b ) } @{$keyarray},@{$lineelements};
+	return \%a;
+}
+
+sub csv_read($filename) {
+	my @stringlines=map { s/[\n\r]+$//g; $_; } read_file($filename);
+	my $keyarray=csv_line_split(shift @stringlines);
+
+	my @lines;
+	foreach my $line ( @stringlines ) {
+		push @lines, csv_line_split_keys($line, $keyarray);	
+	}
+
+	return \@lines;
+}
+
+sub generate_uuid_mapping($opt) {
+	my $green=csv_read($opt->guidnewcsv);
+	my $red=csv_read($opt->guidoldcsv);
+
+	# Create mapping SAMAccountName -> GUID green
+	my %greensamtoguid=map { ( $_->{sAMAccountName}, uc($_->{ObjectGUID}) ) } @{$green};
+
+	# Create list of SAMAccountName, GUID Red, GUID Green
+	my %mapping=map {
+		(uc($_->{ObjectGUID}), {
+			sAMAccountName => $_->{sAMAccountName},
+			ObjectGUID => $greensamtoguid{$_->{sAMAccountName}}
+			}
+		)	
+	} grep {
+		defined($greensamtoguid{$_->{sAMAccountName}})
+	} @{$red};
+
+	return \%mapping;
+}
+
+my ($opt, $usage) = describe_options(
+	'$Script %o <some-arg>',
+	[ 'guidoldcsv=s',	"Old GUID sAMAccount csv", { required => 1 } ],
+	[ 'guidnewcsv=s',	"New GUID sAMAccount csv", { required => 1 } ],
+	[ 'guidmap|m=s',	"Output guidmap.json", { required => 1 } ],
+	[],
+	[ 'help',       "print usage message and exit", { shortcircuit => 1 } ],
+);
+
+print($usage->text), exit if $opt->help;
+
+my $guidmap=generate_uuid_mapping($opt);
+
+write_file($opt->guidmap, to_json($guidmap));

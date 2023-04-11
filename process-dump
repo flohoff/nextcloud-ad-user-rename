@@ -1,0 +1,48 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use feature 'signatures';
+use experimental 'switch';
+use open IO => ":encoding(utf-8)";
+use open ':std';
+use POSIX;
+use File::Slurp;
+use Getopt::Long::Descriptive;
+use Data::Dumper;
+use JSON;
+
+my $guidmatch=qr/^(.*)([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})(.*)$/;
+
+sub line_replace($line, $guidmap) {
+	my($pre, $match, $post);
+
+	my $result="";
+	while(($pre, $match, $post) = ($line =~ $guidmatch)) {
+		$result=(defined($guidmap->{$match}) ? $guidmap->{$match}->{ObjectGUID} : $match) . $post . $result;
+		$line=$pre;
+	}
+	$result=$line . $result;
+	return $result;
+}
+
+my ($opt, $usage) = describe_options(
+	'$Script %o <some-arg>',
+	[ 'sqlinput|i=s',	"SQL dump input", { required => 1 } ],
+	[ 'sqloutput|o=s',	"SQL dump output", { required => 1 } ],
+	[ 'guidmap|m=s',	"Guidmap.json", { required => 1 } ],
+	[],
+	[ 'help',       "print usage message and exit", { shortcircuit => 1 } ],
+);
+
+print($usage->text), exit if $opt->help;
+
+my $guidmap=from_json(read_file($opt->guidmap));
+
+my $fh=IO::File->new($opt->sqlinput);
+my $fixed=IO::File->new(">" . $opt->sqloutput);
+while(<$fh>) {
+	chomp();
+	my $new=line_replace($_, $guidmap);
+	print $fixed $new . "\n";
+}

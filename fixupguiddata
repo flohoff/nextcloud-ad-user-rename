@@ -1,0 +1,68 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+use open IO => ":encoding(utf-8)";
+use open ':std';
+use POSIX;
+use File::Slurp;
+use Data::Dumper;
+use Getopt::Long::Descriptive;
+use JSON;
+
+my $guidmatch=qr/^(.*)([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})(.*)$/;
+
+sub renameentries($dir, $opt, $guidmap) {
+	my $dh;
+	opendir($dh, $dir);
+	my @entries=readdir($dh);
+	closedir($dh);
+
+	foreach my $entry ( @entries ) {
+		if (my ($pre, $match, $post) = ($entry =~ $guidmatch)) {
+			if (defined($guidmap->{$match})) {
+				my $new=$pre . $guidmap->{$match}->{ObjectGUID} . $post;
+
+				if ($opt->rename) { 
+					rename(sprintf("%s/%s", $dir, $entry), sprintf("%s/%s", $dir, $new));
+				}
+
+				printf("Rename\nFrom: %s/%s\nTo:   %s/%s\n\n",
+					$dir, $entry, $dir, $new);
+			}
+		}
+	}
+}
+
+my ($opt, $usage) = describe_options(
+	'$Script %o <some-arg>',
+	[ 'datastore|d=s',	"Datastore dir", { required => 1 } ],
+	[ 'guidmap|m=s',	"Guidmap.json", { required => 1 } ],
+	[ 'rename',		"Rename", { default => 0 } ],
+	[],
+	[ 'help',       "print usage message and exit", { shortcircuit => 1 } ],
+);
+
+
+sub scanandrename($dir, $opt, $guidmap, $lvl=0) {
+	renameentries($dir, $opt, $guidmap);
+
+	# Recurse down
+	my $dh;
+	opendir($dh, $dir);
+	my @dirs=map {
+			$dir . "/" . $_;
+		} grep {
+			!/^\./ && -d "$dir/$_"
+		} readdir($dh);
+	closedir($dh);
+
+	foreach my $dir ( @dirs ) {
+		scanandrename($dir, $opt, $guidmap, $lvl+1);
+	}
+}
+
+my $guidmap=from_json(read_file($opt->guidmap));
+scanandrename($opt->datastore, $opt, $guidmap);
